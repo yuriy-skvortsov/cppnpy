@@ -3,7 +3,7 @@ Creation of this minimalistic header-only library was inspired by https://github
 Unlike cnpy, it generates output in form of byte buffers (std::string), which permits more flexible use. It also does not attempt to deal with big-endian file format and, therefore, hopefully, contains less bugs.
 
 # Usage
-Just put cppnpy.h in your project and include it. Add -lz linker flag. Enjoy.
+Just put [cppnpy.h](cppnpy.h) in your project and include it. Add -lz linker flag. Enjoy.
 You can also get rid of zlib dependency if you wish, in which case you would need to provide a crc32 implementation.
 
 # Interface
