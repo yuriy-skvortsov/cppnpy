@@ -156,7 +156,7 @@ namespace cppnpy {
         {}
     };
 
-    std::string zip(const std::vector<file_t> &files)
+    inline std::string zip(const std::vector<file_t> &files)
     {
         assert(!files.empty());
         
