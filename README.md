@@ -10,7 +10,10 @@ You can also get rid of zlib dependency if you wish, in which case you would nee
 Everything is wrapped into cppnpy namespace.
 
 - `carr2npy(data, shape)` converts c array to .npy-formatted buffer
-- `zip(files)` converts a number of files (buffers) to a single zip-formatted buffer
+- `npy2arr(buffer)` converts .npy-formatted buffer to NpArray data structure
+- `zip(map<file_name, file_contents>)` converts a number of files (buffers) to a single zip-formatted buffer
 - `zip({{fname1, carr2npy(data1, shape1)}, ...})` creates .npz-packed buffer of arrays
+- `unzip(buffer)` inflates zipped buffer to map<file_name, file_contents> structure
+- `unzip(npzbuffer)['VarName.npy']` extracts NpArray structure for `VarName` variable from npz buffer
 
-[cppnpy_test.cpp](cppnpy_test.cpp) contains a usage example.
+[cppnpy_test.cpp](cppnpy_test.cpp) contains usage examples.
