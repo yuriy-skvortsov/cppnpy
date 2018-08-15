@@ -8,13 +8,16 @@
 //#include <complex>
 
 #include <string>
+#include <sstream>
 #include <vector>
 #include <cassert>
 #include <zlib.h>
 #include <cstdint>
+#include <cstring>
 #include <numeric>
 #include <tuple>
 #include <type_traits>
+#include <map>
 
 namespace cppnpy {
     template<typename T>
@@ -54,7 +57,7 @@ namespace cppnpy {
             : dsize(dsize_)
         {}
     };
-      
+    
     template<typename T> std::string carr2npy(const T* data, const std::vector<size_t> shape) {
         assert(shape.size() != 0);
         assert(data != nullptr);
@@ -83,12 +86,76 @@ namespace cppnpy {
         return buffer;
     }
 
-    struct file_t
+    struct NpyArray
     {
-        std::string name;
-        std::string contents;
+        std::string buffer;
+        std::vector<size_t> shape;
+        bool fortran_order;
+        char type_symbol;
+        unsigned type_size;
+
+        template<typename T>
+        bool is_of_type() const {
+            return np_type_id<T> == type_symbol && sizeof(T) == type_size;
+        }
+
+        template<typename T>
+        T* data() {
+            assert(!buffer.empty());
+            assert(is_of_type<T>());
+            return reinterpret_cast<T*>(buffer.data());
+        }
+
+        size_t size() const {
+            return buffer.size() / type_size;
+        }
     };
 
+    inline NpyArray npy2arr(std::string const& buffer)
+    {
+        NpHeader header(0);
+        if(buffer.compare(0, sizeof(header.head), (char const*) header.head, sizeof(header.head)) != 0) {
+            return {};
+        }
+        memcpy(&header, buffer.data(), sizeof(header));
+        size_t offset = sizeof(header);
+        std::string dict(buffer.data()+offset, header.dsize);
+        offset += header.dsize;
+        
+        NpyArray nparr;
+
+        size_t doffset = dict.find("'descr'", 0);
+        doffset = dict.find(":", doffset+1);
+        doffset = dict.find("'", doffset+1);
+        char endianness = dict[doffset+1];
+        if(endianness != '<' && endianness != '|') { return {}; }
+        nparr.type_symbol = dict[doffset+2];
+        doffset += 3;
+        nparr.type_size = atoi(dict.substr(doffset, dict.find("'", doffset)).c_str());
+
+        doffset = dict.find("'fortran_order'", 0);
+        doffset = dict.find(":", doffset+1);
+        doffset = dict.find_first_of("TF", doffset+1);
+        nparr.fortran_order = (dict[doffset] == 'T');
+        
+        doffset = dict.find("'shape'", 0);
+        doffset = dict.find(":", doffset+1);
+        doffset = dict.find("(", doffset+1) + 1;
+        std::stringstream shapestr(dict.substr(doffset,
+                                               dict.find(")", doffset) - doffset));
+        while(true) {
+            constexpr size_t maxlen = 16;
+            char numstr[maxlen];
+            shapestr.getline(numstr, maxlen, ',');
+            if(shapestr.fail()) { break; }
+            nparr.shape.push_back(atoi(numstr));            
+        }
+
+        nparr.buffer = buffer.substr(offset);
+        
+        return nparr;
+    }
+    
     struct __attribute__((__packed__)) ZipLHeader
     {
         unsigned char sig[4] = {'P', 'K', 0x03u, 0x04u};
@@ -102,12 +169,15 @@ namespace cppnpy {
         uint32_t ufsize;
         uint16_t fname_size;
         uint16_t xtrf_size = 0;
+        
         ZipLHeader(uint32_t crc_, uint32_t fsize_, uint32_t fname_size_)
             : crc(crc_)
             , cfsize(fsize_)
             , ufsize(fsize_)
             , fname_size(fname_size_)
         {}
+        
+        ZipLHeader() {}
     };
 
     struct __attribute__((__packed__)) ZipGHeader
@@ -156,7 +226,7 @@ namespace cppnpy {
         {}
     };
 
-    inline std::string zip(const std::vector<file_t> &files)
+    inline std::string zip(const std::map<std::string, std::string> &files)
     {
         assert(!files.empty());
         
@@ -165,21 +235,23 @@ namespace cppnpy {
         
         for(auto const& file : files)
         {
-            assert(!file.name.empty());
-            assert(!file.contents.empty());
+            std::string const& fname = file.first;
+            std::string const& fcontents = file.second;
+            assert(!fname.empty());
+            assert(!fcontents.empty());
             
             size_t local_offset = buffer.size();
             
-            uint32_t crc = crc32(0, (uint8_t*)file.contents.data(), file.contents.size());
+            uint32_t crc = crc32(0, (uint8_t*)fcontents.data(), fcontents.size());
 
-            ZipLHeader lheader(crc, file.contents.size(), file.name.size());        
+            ZipLHeader lheader(crc, fcontents.size(), fname.size());        
             buffer.insert(buffer.size(), (const char*)&lheader, sizeof(lheader));
-            buffer += file.name;
-            buffer += file.contents;
+            buffer += fname;
+            buffer += fcontents;
 
-            ZipGHeader gheader(crc, file.contents.size(), file.name.size(), local_offset);
+            ZipGHeader gheader(crc, fcontents.size(), fname.size(), local_offset);
             global_header.insert(global_header.size(), (const char*)&gheader, sizeof(gheader));
-            global_header += file.name;
+            global_header += fname;
         }
         size_t global_offset = buffer.size();
 
@@ -188,7 +260,58 @@ namespace cppnpy {
         ZipFooter zfooter(files.size(), global_header.size(), global_offset);
         buffer.insert(buffer.size(), (const char*)&zfooter, sizeof(zfooter));
         return buffer;
-    }    
+    }
+
+    inline std::map<std::string, std::string> unzip(const std::string &zipbuf)
+    {
+        std::map<std::string, std::string> files;
+        size_t offset = 0;
+        
+        const size_t zipbuf_size = zipbuf.size();
+        const char *zipbuf_data = zipbuf.data();
+        
+        while(zipbuf_size - offset > sizeof(ZipLHeader)) {
+            ZipLHeader lheader;
+            memcpy(&lheader, zipbuf_data + offset, sizeof(ZipLHeader));
+            offset += sizeof(ZipLHeader);
+
+            if(lheader.sig[0] != 'P' ||
+               lheader.sig[1] != 'K' ||
+               lheader.sig[2] != 0x03u ||
+               lheader.sig[3] != 0x04u) {
+                break;
+            }
+
+            if(zipbuf_size - offset <
+               lheader.fname_size + lheader.xtrf_size + lheader.cfsize) {
+                break;
+            }
+
+            std::string fname(zipbuf_data+offset, lheader.fname_size);
+            offset += lheader.fname_size + lheader.xtrf_size;
+
+            if(lheader.comp_method == 0) {
+                files[fname] = std::string(zipbuf_data+offset, lheader.cfsize);
+            } else {
+                std::string inflated(lheader.ufsize, 0);
+                int err;
+                z_stream d_stream;
+                d_stream.zalloc = Z_NULL;
+                d_stream.zfree = Z_NULL;
+                d_stream.opaque = Z_NULL;
+                d_stream.avail_in = lheader.cfsize;
+                d_stream.next_in = (unsigned char *)zipbuf_data+offset;
+                d_stream.avail_out = lheader.ufsize;
+                d_stream.next_out = (unsigned char*)&inflated[0];
+                err = inflateInit(&d_stream);
+                err = inflate(&d_stream, Z_FINISH);
+                err = inflateEnd(&d_stream);
+                files[fname] = inflated;
+            }
+            offset += lheader.cfsize;         
+        }
+        return files;
+    }
 }
 
 #endif
