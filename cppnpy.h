@@ -303,7 +303,7 @@ namespace cppnpy {
                 d_stream.next_in = (unsigned char *)zipbuf_data+offset;
                 d_stream.avail_out = lheader.ufsize;
                 d_stream.next_out = (unsigned char*)&inflated[0];
-                err = inflateInit(&d_stream);
+                err = inflateInit2(&d_stream, -MAX_WBITS);
                 err = inflate(&d_stream, Z_FINISH);
                 err = inflateEnd(&d_stream);
                 files[fname] = inflated;
