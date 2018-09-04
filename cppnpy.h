@@ -242,7 +242,7 @@ namespace cppnpy {
             
             size_t local_offset = buffer.size();
             
-            uint32_t crc = crc32(0, (uint8_t*)fcontents.data(), fcontents.size());
+            uint32_t crc = (uint32_t)crc32(0, (uint8_t*)fcontents.data(), (uint32_t)fcontents.size());
 
             ZipLHeader lheader(crc, fcontents.size(), fname.size());        
             buffer.insert(buffer.size(), (const char*)&lheader, sizeof(lheader));
@@ -308,7 +308,11 @@ namespace cppnpy {
                 err = inflateEnd(&d_stream);
                 files[fname] = inflated;
             }
-            offset += lheader.cfsize;         
+            offset += lheader.cfsize;
+            uint32_t crc = (uint32_t)crc32(0, (uint8_t*)files[fname].data(), (uint32_t)files[fname].size());
+            if(crc != lheader.crc) {
+                files.erase(fname);
+            }
         }
         return files;
     }
