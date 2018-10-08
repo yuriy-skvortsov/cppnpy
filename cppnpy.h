@@ -74,8 +74,8 @@ namespace cppnpy {
             buffer += std::to_string(s);
             buffer += ", ";
         }
-        buffer.insert(buffer.end()-2, ')');
-        buffer += "}";
+        
+        buffer += "), }";
         buffer.insert(buffer.end(), 16 - (buffer.size() % 16),' ');
         buffer.back() = '\n';
         
